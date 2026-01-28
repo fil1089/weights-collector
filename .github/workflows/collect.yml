@@ -2,7 +2,7 @@ name: Collect Weights IDs
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # Каждые 6 часов
+    - cron: '0 */6 * * *'
   
   workflow_dispatch:
     inputs:
@@ -29,9 +29,6 @@ on:
           - '2'
           - '3'
           - '5'
-  
-  push:
-    branches: [ main ]
 
 env:
   DEFAULT_MAX_TIME: '30'
@@ -53,11 +50,12 @@ jobs:
         cache: 'pip'
     
     - name: 🌐 Setup Chrome
-      uses: browser-actions/setup-chrome@v1
-      with:
-        chrome-version: stable
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+        chromedriver --version
     
-    - name: 📦 Install
+    - name: 📦 Install Python packages
       run: pip install -r requirements.txt
     
     - name: 🚀 Run collector
@@ -69,21 +67,24 @@ jobs:
     - name: 📊 Stats
       run: |
         if [ -f results/latest_ids.txt ]; then
-          echo "Всего ID: $(wc -l < results/latest_ids.txt)"
+          echo "✅ Всего ID: $(wc -l < results/latest_ids.txt)"
+          echo "📦 Размер: $(du -h results/latest_ids.txt | cut -f1)"
+        else
+          echo "⚠️ Файл results не найден"
         fi
     
-    - name: 📤 Upload
+    - name: 📤 Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: weights-results-${{ github.run_number }}
         path: results/
         retention-days: 90
     
-    - name: 💾 Commit
+    - name: 💾 Commit results
       run: |
         git config user.name "GitHub Actions"
         git config user.email "actions@github.com"
-        git add results/
+        git add results/ || true
         git diff --quiet && git diff --staged --quiet || \
-          git commit -m "Auto: $(date '+%Y-%m-%d %H:%M') | IDs: $(wc -l < results/latest_ids.txt 2>/dev/null || echo 0)"
-        git push
+          git commit -m "🤖 Auto: $(date '+%Y-%m-%d %H:%M') | IDs: $(wc -l < results/latest_ids.txt 2>/dev/null || echo 0)"
+        git push || echo "Nothing to push"
