@@ -1,0 +1,89 @@
+name: Collect Weights IDs
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Каждые 6 часов
+  
+  workflow_dispatch:
+    inputs:
+      max_time_minutes:
+        description: 'Таймер (минуты)'
+        required: false
+        default: '30'
+        type: choice
+        options:
+          - '5'
+          - '10'
+          - '15'
+          - '30'
+          - '60'
+          - '120'
+      
+      scroll_delay:
+        description: 'Задержка скролла (секунды)'
+        required: false
+        default: '3'
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '5'
+  
+  push:
+    branches: [ main ]
+
+env:
+  DEFAULT_MAX_TIME: '30'
+  DEFAULT_SCROLL_DELAY: '3'
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    
+    steps:
+    - name: 📥 Checkout
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: 🌐 Setup Chrome
+      uses: browser-actions/setup-chrome@v1
+      with:
+        chrome-version: stable
+    
+    - name: 📦 Install
+      run: pip install -r requirements.txt
+    
+    - name: 🚀 Run collector
+      env:
+        MAX_TIME_MINUTES: ${{ github.event.inputs.max_time_minutes || env.DEFAULT_MAX_TIME }}
+        SCROLL_DELAY: ${{ github.event.inputs.scroll_delay || env.DEFAULT_SCROLL_DELAY }}
+      run: python collector.py
+    
+    - name: 📊 Stats
+      run: |
+        if [ -f results/latest_ids.txt ]; then
+          echo "Всего ID: $(wc -l < results/latest_ids.txt)"
+        fi
+    
+    - name: 📤 Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: weights-results-${{ github.run_number }}
+        path: results/
+        retention-days: 90
+    
+    - name: 💾 Commit
+      run: |
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        git add results/
+        git diff --quiet && git diff --staged --quiet || \
+          git commit -m "Auto: $(date '+%Y-%m-%d %H:%M') | IDs: $(wc -l < results/latest_ids.txt 2>/dev/null || echo 0)"
+        git push
