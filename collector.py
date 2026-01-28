@@ -1,0 +1,202 @@
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
+import time
+import os
+from datetime import datetime, timedelta
+
+class WeightsCollector:
+    def __init__(self, max_time_minutes=30, scroll_delay=3):
+        self.max_time_minutes = max_time_minutes
+        self.scroll_delay = scroll_delay
+        self.all_ids = set()
+        self.start_time = None
+        self.driver = None
+        
+    def setup_driver(self):
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+        
+        service = Service(ChromeDriverManager().install())
+        self.driver = webdriver.Chrome(service=service, options=chrome_options)
+        
+    def get_elapsed_time(self):
+        if not self.start_time:
+            return 0
+        return (datetime.now() - self.start_time).total_seconds()
+    
+    def get_remaining_time(self):
+        elapsed = self.get_elapsed_time()
+        total = self.max_time_minutes * 60
+        remaining = total - elapsed
+        return max(0, remaining)
+    
+    def format_time(self, seconds):
+        mins = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{mins}:{secs:02d}"
+    
+    def should_continue(self):
+        elapsed = self.get_elapsed_time()
+        max_seconds = self.max_time_minutes * 60
+        return elapsed < max_seconds
+    
+    def collect_current_ids(self):
+        found_new = 0
+        
+        try:
+            links = self.driver.find_elements(By.CSS_SELECTOR, 'a[href*="/models/"]')
+            
+            for link in links:
+                try:
+                    href = link.get_attribute('href')
+                    if href and '/models/' in href:
+                        parts = href.split('/models/')
+                        if len(parts) > 1:
+                            model_id = parts[1].split('/')[0].split('?')[0]
+                            if len(model_id) > 15 and model_id not in self.all_ids:
+                                self.all_ids.add(model_id)
+                                found_new += 1
+                except:
+                    continue
+                    
+        except Exception as e:
+            print(f"⚠️ Ошибка сбора: {e}")
+        
+        return found_new
+    
+    def scroll_page(self):
+        try:
+            current_pos = self.driver.execute_script("return window.pageYOffset;")
+            max_height = self.driver.execute_script("return document.body.scrollHeight - window.innerHeight;")
+            
+            self.driver.execute_script("window.scrollBy(0, 600);")
+            time.sleep(self.scroll_delay)
+            
+            new_pos = self.driver.execute_script("return window.pageYOffset;")
+            
+            if new_pos >= max_height * 0.95:
+                print("🔄 Конец страницы, прокрутка вверх...")
+                self.driver.execute_script("window.scrollTo(0, 0);")
+                time.sleep(2)
+                return False
+            
+            return True
+            
+        except Exception as e:
+            print(f"⚠️ Ошибка прокрутки: {e}")
+            return False
+    
+    def run(self):
+        self.start_time = datetime.now()
+        end_time = self.start_time + timedelta(minutes=self.max_time_minutes)
+        
+        print("=" * 70)
+        print("🎯 WEIGHTS.COM AUTO COLLECTOR v3.0")
+        print("=" * 70)
+        print(f"⏰ Таймер: {self.max_time_minutes} минут ({self.max_time_minutes * 60} секунд)")
+        print(f"🕐 Старт: {self.start_time.strftime('%H:%M:%S')}")
+        print(f"🏁 Стоп:  {end_time.strftime('%H:%M:%S')}")
+        print(f"⏱️  Задержка между скроллами: {self.scroll_delay} сек")
+        print("=" * 70 + "\n")
+        
+        try:
+            self.setup_driver()
+            
+            print("🌐 Загрузка weights.com...")
+            self.driver.get("https://weights.com")
+            time.sleep(5)
+            print("✅ Страница загружена\n")
+            
+            scroll_count = 0
+            last_report = time.time()
+            report_interval = 30
+            
+            while self.should_continue():
+                self.collect_current_ids()
+                self.scroll_page()
+                scroll_count += 1
+                
+                current_time = time.time()
+                if current_time - last_report >= report_interval:
+                    elapsed = self.format_time(self.get_elapsed_time())
+                    remaining = self.format_time(self.get_remaining_time())
+                    
+                    print(f"📊 [{elapsed}] Прокруток: {scroll_count} | "
+                          f"ID: {len(self.all_ids)} | "
+                          f"Осталось: {remaining}")
+                    
+                    last_report = current_time
+            
+            print("\n" + "=" * 70)
+            print("⏰ ВРЕМЯ ВЫШЛО - АВТОСТОП")
+            print("=" * 70)
+            
+        except Exception as e:
+            print(f"\n❌ Критическая ошибка: {e}")
+            
+        finally:
+            if self.driver:
+                self.driver.quit()
+            
+            total_time = self.format_time(self.get_elapsed_time())
+            print(f"\n✅ Сбор завершён за {total_time}")
+            print(f"📦 Собрано {len(self.all_ids)} уникальных ID")
+            print(f"🔄 Выполнено прокруток: {scroll_count}\n")
+        
+        return self.all_ids
+
+def save_results(ids):
+    timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    os.makedirs('results', exist_ok=True)
+    
+    ids_file = f'results/weights_ids_{timestamp}.txt'
+    with open(ids_file, 'w') as f:
+        for model_id in sorted(ids):
+            f.write(model_id + '\n')
+    
+    links_file = f'results/weights_links_{timestamp}.txt'
+    with open(links_file, 'w') as f:
+        for model_id in sorted(ids):
+            f.write(f'https://www.weights.com/download?modelId={model_id}\n')
+    
+    with open('results/latest_ids.txt', 'w') as f:
+        for model_id in sorted(ids):
+            f.write(model_id + '\n')
+    
+    with open('results/latest_links.txt', 'w') as f:
+        for model_id in sorted(ids):
+            f.write(f'https://www.weights.com/download?modelId={model_id}\n')
+    
+    print("💾 Результаты сохранены:")
+    print(f"   📄 {ids_file}")
+    print(f"   🔗 {links_file}")
+    print(f"   📄 results/latest_ids.txt")
+    print(f"   🔗 results/latest_links.txt")
+
+if __name__ == "__main__":
+    MAX_TIME_MINUTES = int(os.getenv('MAX_TIME_MINUTES', '30'))
+    SCROLL_DELAY = int(os.getenv('SCROLL_DELAY', '3'))
+    
+    print("\n🔧 КОНФИГУРАЦИЯ:")
+    print(f"   ⏰ Таймер автостопа: {MAX_TIME_MINUTES} минут")
+    print(f"   ⏱️  Задержка скролла: {SCROLL_DELAY} секунд")
+    print(f"   💾 Папка результатов: ./results/\n")
+    
+    collector = WeightsCollector(
+        max_time_minutes=MAX_TIME_MINUTES,
+        scroll_delay=SCROLL_DELAY
+    )
+    
+    ids = collector.run()
+    save_results(ids)
+    
+    print("\n" + "=" * 70)
+    print(f"🎉 ЗАВЕРШЕНО! Собрано {len(ids)} ID")
+    print("=" * 70 + "\n")
