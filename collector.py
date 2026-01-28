@@ -277,7 +277,7 @@ class WeightsCollector:
             
             self.take_screenshot("00_homepage")
             
-            # Шаг 1: Поиск "voice"
+            # Шаг 1: Поиск "1"
             if not self.perform_initial_search():
                 print("❌ Не удалось выполнить поиск")
                 return self.all_ids
