@@ -2,21 +2,21 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 import time
 import os
+import json
 from datetime import datetime, timedelta
 
 class WeightsCollector:
-    def __init__(self, max_time_minutes=30, scroll_delay=3):
+    def __init__(self, max_time_minutes=30, scroll_delay=3, cookies=None):
         self.max_time_minutes = max_time_minutes
         self.scroll_delay = scroll_delay
         self.all_ids = set()
         self.start_time = None
         self.driver = None
         self.scroll_count = 0
+        self.cookies = cookies
         
     def setup_driver(self):
         chrome_options = Options()
@@ -44,78 +44,123 @@ class WeightsCollector:
         except Exception as e:
             pass
     
-    def perform_initial_search(self):
-        """Выполнить начальный поиск"""
+    def load_cookies(self):
+        """Загрузить cookies для авторизации"""
         try:
-            print(f"\n🔍 Ищу поле поиска...")
+            if not self.cookies:
+                print("⚠️ Cookies не указаны")
+                return False
             
-            # Ждём поле поиска
+            print(f"\n🍪 Загрузка cookies...")
+            
+            # Сначала открываем weights.com чтобы установить домен
+            self.driver.get("https://www.weights.com")
+            time.sleep(3)
+            
+            # Парсим cookies
+            # Формат может быть: "key1=value1; key2=value2" или JSON
+            cookies_list = []
+            
+            # Пробуем как обычную строку cookies
+            if self.cookies.startswith('{'):
+                # Это JSON
+                try:
+                    cookies_dict = json.loads(self.cookies)
+                    # Конвертируем в формат Selenium
+                    for key, value in cookies_dict.items():
+                        cookies_list.append({
+                            'name': key,
+                            'value': value,
+                            'domain': '.weights.com'
+                        })
+                except:
+                    pass
+            else:
+                # Это строка вида "key=value; key2=value2"
+                pairs = self.cookies.split('; ')
+                for pair in pairs:
+                    if '=' in pair:
+                        key, value = pair.split('=', 1)
+                        cookies_list.append({
+                            'name': key.strip(),
+                            'value': value.strip(),
+                            'domain': '.weights.com'
+                        })
+            
+            print(f"   Найдено cookies: {len(cookies_list)}")
+            
+            # Добавляем каждый cookie
+            for cookie in cookies_list:
+                try:
+                    self.driver.add_cookie(cookie)
+                except Exception as e:
+                    print(f"   ⚠️ Не удалось добавить cookie {cookie.get('name')}: {e}")
+            
+            print("   ✅ Cookies загружены!")
+            
+            # Обновляем страницу чтобы применить cookies
+            self.driver.refresh()
+            time.sleep(3)
+            
+            self.take_screenshot("01_after_cookies")
+            
+            return True
+            
+        except Exception as e:
+            print(f"   ❌ Ошибка загрузки cookies: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def perform_search(self):
+        """Поиск"""
+        try:
+            print(f"\n🔍 Переход на страницу моделей...")
+            self.driver.get("https://www.weights.com/en/models")
+            time.sleep(5)
+            
+            self.take_screenshot("02_models_page")
+            
+            print("   Ищу поле поиска...")
+            
             search_selectors = [
                 'input[type="search"]',
                 'input[placeholder*="Search"]',
                 'input[placeholder*="search"]',
-                'input[placeholder*="Поиск"]',
-                'input[placeholder*="поиск"]',
                 'input[name="search"]',
                 'input[name="q"]',
-                '.search-input',
-                '#search',
-                'input.search'
             ]
             
             search_box = None
             for selector in search_selectors:
                 try:
-                    search_box = WebDriverWait(self.driver, 5).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                    )
-                    if search_box and search_box.is_displayed():
-                        print(f"✅ Найдено поле поиска: {selector}")
+                    search_box = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if search_box.is_displayed():
+                        print(f"   ✅ Поле поиска: {selector}")
                         break
                 except:
                     continue
             
             if not search_box:
-                # Пробуем найти любой видимый input
-                print("   Ищу альтернативные input поля...")
-                inputs = self.driver.find_elements(By.TAG_NAME, 'input')
-                print(f"   Всего найдено input: {len(inputs)}")
+                print("   ❌ Поле поиска не найдено (возможно требуется авторизация)!")
                 
-                for i, inp in enumerate(inputs):
-                    try:
-                        input_type = inp.get_attribute('type')
-                        placeholder = inp.get_attribute('placeholder') or ''
-                        is_visible = inp.is_displayed()
-                        
-                        if is_visible and input_type in ['search', 'text', None]:
-                            search_box = inp
-                            print(f"✅ Выбран input [{i}]: type={input_type}, placeholder='{placeholder}'")
-                            break
-                    except:
-                        continue
-            
-            if not search_box:
-                print("❌ Поле поиска не найдено!")
-                self.take_screenshot("search_not_found")
+                # Проверяем есть ли кнопка логина
+                login_buttons = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'Sign in') or contains(text(), 'Log in') or contains(text(), 'Login')]")
+                if len(login_buttons) > 0:
+                    print("   ⚠️ Найдена кнопка входа - cookies не сработали или истекли!")
+                
                 return False
             
-            # Вводим запрос "1"
-            print("   Очистка поля...")
             search_box.clear()
             time.sleep(1)
-            
-            print("   Ввод запроса '1'...")
-            search_box.send_keys("1")
+            search_box.send_keys("voice")
             time.sleep(2)
-            
-            print("   Отправка (Enter)...")
             search_box.send_keys(Keys.RETURN)
             
-            print(f"⏳ Ожидание результатов (5 сек)...")
-            time.sleep(5)
+            print(f"   ⏳ Ожидание результатов (8 сек)...")
+            time.sleep(8)
             
-            # НОВОЕ: Прокручиваем страницу результатов чтобы подгрузились модели
-            print("   🔄 Прокручиваю страницу для загрузки результатов...")
+            # Прокручиваем
             for i in range(3):
                 self.driver.execute_script("window.scrollBy(0, 500);")
                 time.sleep(2)
@@ -123,85 +168,44 @@ class WeightsCollector:
             self.driver.execute_script("window.scrollTo(0, 0);")
             time.sleep(2)
             
-            self.take_screenshot("01_search_results")
-            
-            print(f"✅ Текущий URL: {self.driver.current_url}")
+            self.take_screenshot("03_search_results")
             
             return True
             
         except Exception as e:
-            print(f"❌ Ошибка поиска: {e}")
-            import traceback
-            traceback.print_exc()
-            self.take_screenshot("search_error")
+            print(f"   ❌ Ошибка поиска: {e}")
             return False
     
     def open_first_model(self):
-        """Открыть первый результат поиска"""
+        """Открыть первый результат"""
         try:
-            print(f"\n👆 Ищу результаты поиска...")
+            print(f"\n👆 Открываю первый результат...")
             
-            # Пробуем разные селекторы для ссылок на модели
-            link_selectors = [
-                'a[href*="/models/"]',
-                'a[href*="/en/models/"]',
-                'a[href*="models"]'
-            ]
-            
-            model_links = []
-            for selector in link_selectors:
-                model_links = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                if len(model_links) > 0:
-                    print(f"   Найдено ссылок ({selector}): {len(model_links)}")
-                    break
-            
-            print(f"   Всего найдено ссылок на модели: {len(model_links)}")
+            model_links = self.driver.find_elements(By.CSS_SELECTOR, 'a[href*="/models/"]')
+            print(f"   Найдено ссылок: {len(model_links)}")
             
             if len(model_links) == 0:
-                print("❌ Результаты поиска не найдены!")
-                print("   Вывожу информацию о странице:")
-                
-                all_links = self.driver.find_elements(By.TAG_NAME, 'a')
-                print(f"   Всего ссылок на странице: {len(all_links)}")
-                
-                # Показываем первые 10 ссылок для диагностики
-                print("   Первые 10 ссылок:")
-                for i, link in enumerate(all_links[:10]):
-                    href = link.get_attribute('href') or ''
-                    text = link.text[:50] if link.text else ''
-                    print(f"   [{i}] {href[:80]} | {text}")
-                
-                self.take_screenshot("no_results")
+                print("   ❌ Результаты не найдены!")
                 return False
             
-            # Кликаем на первую модель
             first_model = model_links[0]
             model_url = first_model.get_attribute('href')
             
-            print(f"   Открываю модель: {model_url}")
+            print(f"   Открываю: {model_url}")
             
-            # Пробуем кликнуть через JavaScript
-            try:
-                self.driver.execute_script("arguments[0].scrollIntoView(true);", first_model)
-                time.sleep(1)
-                self.driver.execute_script("arguments[0].click();", first_model)
-            except:
-                print("   JavaScript клик не сработал, пробую обычный...")
-                first_model.click()
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", first_model)
+            time.sleep(1)
+            self.driver.execute_script("arguments[0].click();", first_model)
             
-            print(f"⏳ Ожидание загрузки страницы модели (10 сек)...")
             time.sleep(10)
             
-            print(f"✅ Страница модели открыта: {self.driver.current_url}")
-            self.take_screenshot("02_model_page")
+            print(f"   ✅ Модель открыта: {self.driver.current_url}")
+            self.take_screenshot("04_model_page")
             
             return True
             
         except Exception as e:
-            print(f"❌ Ошибка открытия модели: {e}")
-            import traceback
-            traceback.print_exc()
-            self.take_screenshot("model_open_error")
+            print(f"   ❌ Ошибка: {e}")
             return False
         
     def get_elapsed_time(self):
@@ -226,11 +230,10 @@ class WeightsCollector:
         return elapsed < max_seconds
     
     def collect_current_ids(self):
-        """Собрать ID со страницы"""
+        """Собрать ID"""
         found_new = 0
         
         try:
-            # Метод 1: Ссылки на модели
             links = self.driver.find_elements(By.CSS_SELECTOR, 'a[href*="/models/"]')
             
             for link in links:
@@ -246,9 +249,7 @@ class WeightsCollector:
                 except:
                     continue
             
-            # Метод 2: Изображения от weights.com
             images = self.driver.find_elements(By.TAG_NAME, 'img')
-            
             for img in images:
                 try:
                     src = img.get_attribute('src') or img.get_attribute('data-src')
@@ -262,9 +263,7 @@ class WeightsCollector:
                 except:
                     continue
             
-            # Метод 3: Все длинные ID в ссылках
             all_links = self.driver.find_elements(By.TAG_NAME, 'a')
-            
             for link in all_links:
                 try:
                     href = link.get_attribute('href')
@@ -287,20 +286,16 @@ class WeightsCollector:
         return found_new
     
     def scroll_page(self):
-        """Скролл страницы"""
+        """Скролл"""
         try:
+            self.driver.execute_script("window.scrollBy(0, 800);")
+            time.sleep(self.scroll_delay)
+            
             current_pos = self.driver.execute_script("return window.pageYOffset;")
             max_height = self.driver.execute_script("return document.body.scrollHeight - window.innerHeight;")
             
-            # Скролл вниз
-            self.driver.execute_script("window.scrollBy(0, 600);")
-            time.sleep(self.scroll_delay)
-            
-            new_pos = self.driver.execute_script("return window.pageYOffset;")
-            
-            # Если достигли конца - прокрутка вверх
-            if new_pos >= max_height * 0.95:
-                print("🔄 Конец страницы, прокрутка вверх...")
+            if current_pos >= max_height * 0.95:
+                print("🔄 Конец страницы...")
                 self.driver.execute_script("window.scrollTo(0, 0);")
                 time.sleep(2)
                 return False
@@ -308,7 +303,6 @@ class WeightsCollector:
             return True
             
         except Exception as e:
-            print(f"⚠️ Ошибка прокрутки: {e}")
             return False
     
     def run(self):
@@ -316,60 +310,50 @@ class WeightsCollector:
         end_time = self.start_time + timedelta(minutes=self.max_time_minutes)
         
         print("=" * 70)
-        print("🎯 WEIGHTS.COM VOICE MODELS COLLECTOR v3.8 (SCROLL SEARCH)")
+        print("🎯 WEIGHTS.COM COLLECTOR v7.0 (COOKIES AUTH)")
         print("=" * 70)
         print(f"⏰ Таймер: {self.max_time_minutes} минут")
         print(f"🕐 Старт: {self.start_time.strftime('%H:%M:%S')}")
         print(f"🏁 Стоп:  {end_time.strftime('%H:%M:%S')}")
-        print(f"⏱️  Задержка скролла: {self.scroll_delay} сек")
         print("=" * 70 + "\n")
         
         try:
             print("🔧 Настройка браузера...")
             self.setup_driver()
             
-            print("🌐 Загрузка weights.com/en/models...")
-            self.driver.get("https://www.weights.com/en/models")
+            self.take_screenshot("00_start")
             
-            print(f"   URL: {self.driver.current_url}")
-            print(f"   Title: {self.driver.title}")
-            
-            print("⏳ Ожидание загрузки страницы (10 сек)...")
-            time.sleep(10)
-            
-            self.take_screenshot("00_models_page")
-            
-            # Шаг 1: Поиск "1"
-            if not self.perform_initial_search():
-                print("⚠️ Поиск не удался")
-            
-            # Шаг 2: Открыть первый результат
-            if not self.open_first_model():
-                print("❌ Не удалось открыть модель, завершение")
+            # Загружаем cookies
+            if not self.load_cookies():
+                print("❌ Не удалось загрузить cookies!")
                 return self.all_ids
             
-            print("\n✅ Начинаю бесконечный скролл и сбор ID...\n")
+            # Поиск
+            if not self.perform_search():
+                print("⚠️ Поиск не удался (возможно cookies устарели)")
+                return self.all_ids
+            
+            # Открыть модель
+            if not self.open_first_model():
+                print("❌ Не удалось открыть модель")
+                return self.all_ids
+            
+            print("\n✅ Начинаю скролл и сбор...\n")
             
             self.scroll_count = 0
             last_report = time.time()
             report_interval = 30
             last_ids_count = 0
             
-            # Бесконечный скролл до конца таймера
             while self.should_continue():
-                # Сбор ID
                 self.collect_current_ids()
-                
-                # Скролл
                 self.scroll_page()
                 self.scroll_count += 1
                 
-                # Периодический отчёт
                 current_time = time.time()
                 if current_time - last_report >= report_interval:
                     elapsed = self.format_time(self.get_elapsed_time())
                     remaining = self.format_time(self.get_remaining_time())
-                    
                     new_ids = len(self.all_ids) - last_ids_count
                     last_ids_count = len(self.all_ids)
                     
@@ -378,19 +362,18 @@ class WeightsCollector:
                           f"Осталось: {remaining}")
                     
                     last_report = current_time
-                    
-                # Скриншот каждые 50 прокруток
-                if self.scroll_count % 50 == 0:
+                
+                if self.scroll_count % 30 == 0:
                     self.take_screenshot(f"scroll_{self.scroll_count}")
             
             print("\n" + "=" * 70)
-            print("⏰ ВРЕМЯ ВЫШЛО - АВТОСТОП")
+            print("⏰ АВТОСТОП")
             print("=" * 70)
             
             self.take_screenshot("99_final")
             
         except Exception as e:
-            print(f"\n❌ Критическая ошибка: {e}")
+            print(f"\n❌ Ошибка: {e}")
             import traceback
             traceback.print_exc()
             
@@ -404,9 +387,8 @@ class WeightsCollector:
                 self.driver.quit()
             
             total_time = self.format_time(self.get_elapsed_time())
-            print(f"\n✅ Сбор завершён за {total_time}")
-            print(f"📦 Собрано {len(self.all_ids)} уникальных ID")
-            print(f"🔄 Выполнено прокруток: {self.scroll_count}\n")
+            print(f"\n✅ Завершено за {total_time}")
+            print(f"📦 Собрано {len(self.all_ids)} ID\n")
         
         return self.all_ids
 
@@ -440,21 +422,19 @@ def save_results(ids):
         for model_id in sorted(ids):
             f.write(f'https://www.weights.com/download?modelId={model_id}\n')
     
-    print("💾 Результаты сохранены:")
+    print("💾 Сохранено:")
     print(f"   📄 {ids_file}")
     print(f"   🔗 {links_file}")
 
 if __name__ == "__main__":
     MAX_TIME_MINUTES = int(os.getenv('MAX_TIME_MINUTES', '30'))
     SCROLL_DELAY = int(os.getenv('SCROLL_DELAY', '3'))
-    
-    print("\n🔧 КОНФИГУРАЦИЯ:")
-    print(f"   ⏰ Таймер: {MAX_TIME_MINUTES} минут")
-    print(f"   ⏱️  Задержка: {SCROLL_DELAY} секунд\n")
+    COOKIES = os.getenv('WEIGHTS_COOKIES')
     
     collector = WeightsCollector(
         max_time_minutes=MAX_TIME_MINUTES,
-        scroll_delay=SCROLL_DELAY
+        scroll_delay=SCROLL_DELAY,
+        cookies=COOKIES
     )
     
     ids = collector.run()
