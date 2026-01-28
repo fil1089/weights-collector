@@ -1,10 +1,10 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
 import time
 import os
 from datetime import datetime, timedelta
@@ -47,77 +47,130 @@ class WeightsCollector:
     def perform_initial_search(self):
         """Выполнить начальный поиск"""
         try:
-            print(f"\n🔍 Выполняю поиск голосовых моделей...")
+            print(f"\n🔍 Ищу поле поиска...")
             
             # Ждём поле поиска
             search_selectors = [
                 'input[type="search"]',
                 'input[placeholder*="Search"]',
                 'input[placeholder*="search"]',
+                'input[placeholder*="Поиск"]',
+                'input[placeholder*="поиск"]',
                 'input[name="search"]',
                 'input[name="q"]',
                 '.search-input',
-                '#search'
+                '#search',
+                'input.search'
             ]
             
             search_box = None
             for selector in search_selectors:
                 try:
-                    search_box = WebDriverWait(self.driver, 3).until(
+                    search_box = WebDriverWait(self.driver, 5).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                     )
-                    if search_box:
+                    if search_box and search_box.is_displayed():
                         print(f"✅ Найдено поле поиска: {selector}")
                         break
                 except:
                     continue
             
             if not search_box:
-                # Пробуем найти любой input
+                # Пробуем найти любой видимый input
+                print("   Ищу альтернативные input поля...")
                 inputs = self.driver.find_elements(By.TAG_NAME, 'input')
-                for inp in inputs:
-                    input_type = inp.get_attribute('type')
-                    if input_type in ['search', 'text', None]:
-                        search_box = inp
-                        print(f"✅ Найден input: type={input_type}")
-                        break
+                print(f"   Всего найдено input: {len(inputs)}")
+                
+                for i, inp in enumerate(inputs):
+                    try:
+                        input_type = inp.get_attribute('type')
+                        placeholder = inp.get_attribute('placeholder') or ''
+                        is_visible = inp.is_displayed()
+                        
+                        if is_visible and input_type in ['search', 'text', None]:
+                            search_box = inp
+                            print(f"✅ Выбран input [{i}]: type={input_type}, placeholder='{placeholder}'")
+                            break
+                    except:
+                        continue
             
             if not search_box:
                 print("❌ Поле поиска не найдено!")
                 self.take_screenshot("search_not_found")
                 return False
             
-            # Вводим запрос "voice"
+            # Вводим запрос "1"
+            print("   Очистка поля...")
             search_box.clear()
-            time.sleep(0.5)
-            search_box.send_keys("voice")
             time.sleep(1)
+            
+            print("   Ввод запроса '1'...")
+            search_box.send_keys("1")
+            time.sleep(2)
+            
+            print("   Отправка (Enter)...")
             search_box.send_keys(Keys.RETURN)
             
-            print(f"⏳ Ожидание результатов поиска...")
+            print(f"⏳ Ожидание результатов (5 сек)...")
             time.sleep(5)
             
+            # НОВОЕ: Прокручиваем страницу результатов чтобы подгрузились модели
+            print("   🔄 Прокручиваю страницу для загрузки результатов...")
+            for i in range(3):
+                self.driver.execute_script("window.scrollBy(0, 500);")
+                time.sleep(2)
+            
+            self.driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(2)
+            
             self.take_screenshot("01_search_results")
+            
+            print(f"✅ Текущий URL: {self.driver.current_url}")
             
             return True
             
         except Exception as e:
             print(f"❌ Ошибка поиска: {e}")
+            import traceback
+            traceback.print_exc()
             self.take_screenshot("search_error")
             return False
     
     def open_first_model(self):
         """Открыть первый результат поиска"""
         try:
-            print(f"\n👆 Открываю первый результат...")
+            print(f"\n👆 Ищу результаты поиска...")
             
-            # Ищем ссылки на модели
-            model_links = self.driver.find_elements(By.CSS_SELECTOR, 'a[href*="/models/"]')
+            # Пробуем разные селекторы для ссылок на модели
+            link_selectors = [
+                'a[href*="/models/"]',
+                'a[href*="/en/models/"]',
+                'a[href*="models"]'
+            ]
             
-            print(f"   Найдено ссылок на модели: {len(model_links)}")
+            model_links = []
+            for selector in link_selectors:
+                model_links = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                if len(model_links) > 0:
+                    print(f"   Найдено ссылок ({selector}): {len(model_links)}")
+                    break
+            
+            print(f"   Всего найдено ссылок на модели: {len(model_links)}")
             
             if len(model_links) == 0:
                 print("❌ Результаты поиска не найдены!")
+                print("   Вывожу информацию о странице:")
+                
+                all_links = self.driver.find_elements(By.TAG_NAME, 'a')
+                print(f"   Всего ссылок на странице: {len(all_links)}")
+                
+                # Показываем первые 10 ссылок для диагностики
+                print("   Первые 10 ссылок:")
+                for i, link in enumerate(all_links[:10]):
+                    href = link.get_attribute('href') or ''
+                    text = link.text[:50] if link.text else ''
+                    print(f"   [{i}] {href[:80]} | {text}")
+                
                 self.take_screenshot("no_results")
                 return False
             
@@ -125,12 +178,19 @@ class WeightsCollector:
             first_model = model_links[0]
             model_url = first_model.get_attribute('href')
             
-            print(f"   Открываю: {model_url}")
+            print(f"   Открываю модель: {model_url}")
             
-            first_model.click()
+            # Пробуем кликнуть через JavaScript
+            try:
+                self.driver.execute_script("arguments[0].scrollIntoView(true);", first_model)
+                time.sleep(1)
+                self.driver.execute_script("arguments[0].click();", first_model)
+            except:
+                print("   JavaScript клик не сработал, пробую обычный...")
+                first_model.click()
             
-            print(f"⏳ Ожидание загрузки страницы модели...")
-            time.sleep(5)
+            print(f"⏳ Ожидание загрузки страницы модели (10 сек)...")
+            time.sleep(10)
             
             print(f"✅ Страница модели открыта: {self.driver.current_url}")
             self.take_screenshot("02_model_page")
@@ -139,6 +199,8 @@ class WeightsCollector:
             
         except Exception as e:
             print(f"❌ Ошибка открытия модели: {e}")
+            import traceback
+            traceback.print_exc()
             self.take_screenshot("model_open_error")
             return False
         
@@ -254,7 +316,7 @@ class WeightsCollector:
         end_time = self.start_time + timedelta(minutes=self.max_time_minutes)
         
         print("=" * 70)
-        print("🎯 WEIGHTS.COM VOICE MODELS COLLECTOR v3.5")
+        print("🎯 WEIGHTS.COM VOICE MODELS COLLECTOR v3.8 (SCROLL SEARCH)")
         print("=" * 70)
         print(f"⏰ Таймер: {self.max_time_minutes} минут")
         print(f"🕐 Старт: {self.start_time.strftime('%H:%M:%S')}")
@@ -266,25 +328,24 @@ class WeightsCollector:
             print("🔧 Настройка браузера...")
             self.setup_driver()
             
-            print("🌐 Загрузка weights.com...")
+            print("🌐 Загрузка weights.com/en/models...")
             self.driver.get("https://www.weights.com/en/models")
             
             print(f"   URL: {self.driver.current_url}")
             print(f"   Title: {self.driver.title}")
             
-            print("⏳ Ожидание загрузки (10 сек)...")
+            print("⏳ Ожидание загрузки страницы (10 сек)...")
             time.sleep(10)
             
-            self.take_screenshot("00_homepage")
+            self.take_screenshot("00_models_page")
             
             # Шаг 1: Поиск "1"
             if not self.perform_initial_search():
-                print("❌ Не удалось выполнить поиск")
-                return self.all_ids
+                print("⚠️ Поиск не удался")
             
             # Шаг 2: Открыть первый результат
             if not self.open_first_model():
-                print("❌ Не удалось открыть модель")
+                print("❌ Не удалось открыть модель, завершение")
                 return self.all_ids
             
             print("\n✅ Начинаю бесконечный скролл и сбор ID...\n")
@@ -400,5 +461,5 @@ if __name__ == "__main__":
     save_results(ids)
     
     print("\n" + "=" * 70)
-    print(f"🎉 ЗАВЕРШЕНО! Собрано {len(ids)} ID голосовых моделей")
+    print(f"🎉 ЗАВЕРШЕНО! Собрано {len(ids)} ID")
     print("=" * 70 + "\n")
