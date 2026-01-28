@@ -64,3 +64,11 @@ jobs:
         name: weights-ids
         path: results/
         retention-days: 30
+
+            - name: Run collector
+      env:
+        MAX_TIME_MINUTES: ${{ github.event.inputs.max_time_minutes }}
+        SCROLL_DELAY: '3'
+        WEIGHTS_COOKIES: ${{ secrets.WEIGHTS_COOKIES }}
+      run: python collector.py
+
