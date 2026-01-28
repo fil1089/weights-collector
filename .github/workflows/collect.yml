@@ -46,12 +46,12 @@ jobs:
       env:
         MAX_TIME_MINUTES: ${{ github.event.inputs.max_time_minutes }}
         SCROLL_DELAY: '3'
+        WEIGHTS_COOKIES: ${{ secrets.WEIGHTS_COOKIES }}
       run: python collector.py
     
-    # НОВОЕ: Сохраняем скриншоты
     - name: Upload screenshots
       uses: actions/upload-artifact@v4
-      if: always()  # Загрузить даже если была ошибка
+      if: always()
       with:
         name: screenshots
         path: screenshots/
@@ -64,11 +64,3 @@ jobs:
         name: weights-ids
         path: results/
         retention-days: 30
-
-            - name: Run collector
-      env:
-        MAX_TIME_MINUTES: ${{ github.event.inputs.max_time_minutes }}
-        SCROLL_DELAY: '3'
-        WEIGHTS_COOKIES: ${{ secrets.WEIGHTS_COOKIES }}
-      run: python collector.py
-
