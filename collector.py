@@ -267,7 +267,7 @@ class WeightsCollector:
             self.setup_driver()
             
             print("🌐 Загрузка weights.com...")
-            self.driver.get("https://weights.com")
+            self.driver.get("https://www.weights.com/en/models")
             
             print(f"   URL: {self.driver.current_url}")
             print(f"   Title: {self.driver.title}")
